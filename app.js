@@ -1,4 +1,5 @@
     let parsedList = [];
+    const savedReservations = JSON.parse(localStorage.getItem("registeredReservations") || "[]");
 
     function parseMultiReservations() {
       const raw = document.getElementById('rawText').value;
@@ -22,11 +23,15 @@
           const time = timeMatch[1];
           const court = courtMatch ? `${courtMatch[1]}코트` : '';
 
-          parsedList.push({
-            facility: `${facility} ${court}`.trim(),
-            date: date,
-            time: time
-          });
+     const reservation = {
+    facility: `${facility} ${court}`.trim(),
+    date,
+    time
+};
+
+reservation.id = `${reservation.facility}_${reservation.date}_${reservation.time}`;
+
+parsedList.push(reservation);
         }
       });
 
@@ -46,7 +51,16 @@
           <div class="item-title">🎾 ${item.facility}</div>
           <div class="item-detail">📅 <strong>일자:</strong> ${item.date}</div>
           <div class="item-detail">⏰ <strong>시간:</strong> ${item.time}</div>
-          <button class="btn-add" onclick="addSingleToGCal(${idx})">개별 구글 캘린더 추가</button>
+          <button
+            class="btn-add"
+            id="btn-${item.id}"
+            onclick="addSingleToGCal(${idx})">개별 구글 캘린더 추가</button>
+       if(savedReservations.includes(item.id)){
+            const btn=document.getElementById(`btn-${item.id}`);
+            btn.innerHTML="✅ 등록완료";
+            btn.disabled=true;
+            btn.style.background="#34C759";
+}
         `;
         listContainer.appendChild(itemCard);
       });
@@ -68,6 +82,21 @@
 
       const gcalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${dates}&details=${details}`;
       window.open(gcalUrl, '_blank');
+        if(!savedReservations.includes(item.id)){
+    savedReservations.push(item.id);
+    localStorage.setItem(
+        "registeredReservations",
+        JSON.stringify(savedReservations)
+    );
+}
+
+const btn=document.getElementById(`btn-${item.id}`);
+
+if(btn){
+    btn.innerHTML="✅ 등록완료";
+    btn.disabled=true;
+    btn.style.background="#34C759";
+}
     }
 
     // 🚀 전체 일정을 .ics 파일로 묶어서 한번에 추가하는 함수
