@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>CourtSync</title>
+  <style>
+    :root {
+      --primary: #007AFF;
+      --success: #34C759;
+      --bg: #F2F2F7;
+      --card-bg: #FFFFFF;
+      --border: #E5E5EA;
+    }
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg);
+      color: #1C1C1E;
+    }
+    header {
+      background: var(--card-bg);
+      padding: 18px;
+      text-align: center;
+      font-weight: 700;
+      font-size: 1.2rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .container {
+      max-width: 600px;
+      margin: 20px auto;
+      padding: 0 16px 40px;
+    }
+    .card {
+      background: var(--card-bg);
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+      margin-bottom: 16px;
+    }
+    textarea {
+      width: 100%;
+      height: 140px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      box-sizing: border-box;
+      font-size: 14px;
+      resize: none;
+      margin-top: 8px;
+    }
+    button {
+      width: 100%;
+      background: var(--primary);
+      color: white;
+      border: none;
+      padding: 14px;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 600;
+      margin-top: 10px;
+      cursor: pointer;
+    }
+    .btn-all {
+      background-color: #5856D6;
+      font-size: 16px;
+      padding: 16px;
+      border-radius: 12px;
+      margin-bottom: 12px;
+      box-shadow: 0 4px 12px rgba(88, 86, 214, 0.25);
+    }
+    .item-card {
+      background: #FFFFFF;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-top: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .item-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #000;
+    }
+    .item-detail {
+      font-size: 14px;
+      color: #555;
+    }
+    .btn-add {
+      background-color: var(--success);
+      color: white;
+      border: none;
+      padding: 10px;
+      font-size: 14px;
+      margin-top: 6px;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: bold;
+      background-color: #E5F9ED;
+      color: #15803D;
+      width: fit-content;
+      margin-bottom: 4px;
+    }
+  </style>
+</head>
+<body>
+
+  <header>💡 CourtSync - 다중 예약 추출</header>
+
+  <div class="container">
+    <div class="card">
+      <h3 style="margin:0 0 6px 0;">1. 강동구 예약 내역 전체 붙여넣기</h3>
+      <p style="font-size:13px; color:#666; margin:0 0 8px 0;">
+        마이페이지 표 전체를 복사해서 아래에 그대로 붙여넣어 주세요.
+      </p>
+      <textarea id="rawText" placeholder="여기에 마이페이지에서 복사한 내역을 붙여넣으세요..."></textarea>
+      <button onclick="parseMultiReservations()">여러 건 예약 한번에 추출하기</button>
+    </div>
+
+    <div id="resultSection" style="display:none;">
+      <h3 style="margin: 16px 4px 8px 4px; font-size:1.1rem;">
+        2. 추출된 예약 목록 (<span id="countText">0</span>건)
+      </h3>
+      
+      <!-- 🚀 전체 한번에 등록하는 버튼 추가 -->
+      <button class="btn-all" onclick="downloadAllICS()">
+        📅 모든 예약 일시 한번에 캘린더 저장하기 (.ics)
+      </button>
+
+      <div id="reservationList"></div>
+    </div>
+  </div>
+
+  <script>
+    let parsedList = [];
+
+    function parseMultiReservations() {
+      const raw = document.getElementById('rawText').value;
+      const listContainer = document.getElementById('reservationList');
+      listContainer.innerHTML = '';
+      parsedList = [];
+
+      const blocks = raw.split(/상세보기|신청취소/);
+
+      blocks.forEach(block => {
+        if (!block.includes('결제완료')) return;
+
+        const facilityMatch = block.match(/([가-힣]+테니스장|[가-힣]+체육시설)/);
+        const dateMatch = block.match(/(\d{4}-\d{2}-\d{2})/);
+        const timeMatch = block.match(/(\d{1,2}:\d{2}~\d{1,2}:\d{2})/);
+        const courtMatch = block.match(/\)\s*(\d{1,2})\s*\d{1,2}:\d{2}/);
+
+        if (facilityMatch && dateMatch && timeMatch) {
+          const facility = facilityMatch[1];
+          const date = dateMatch[1];
+          const time = timeMatch[1];
+          const court = courtMatch ? `${courtMatch[1]}코트` : '';
+
+          parsedList.push({
+            facility: `${facility} ${court}`.trim(),
+            date: date,
+            time: time
+          });
+        }
+      });
+
+      if (parsedList.length === 0) {
+        alert('유효한 예약(결제완료 상태)을 찾지 못했습니다. 붙여넣은 텍스트를 확인해 주세요!');
+        document.getElementById('resultSection').style.display = 'none';
+        return;
+      }
+
+      document.getElementById('countText').innerText = parsedList.length;
+
+      parsedList.forEach((item, idx) => {
+        const itemCard = document.createElement('div');
+        itemCard.className = 'item-card';
+        itemCard.innerHTML = `
+          <span class="badge">결제완료</span>
+          <div class="item-title">🎾 ${item.facility}</div>
+          <div class="item-detail">📅 <strong>일자:</strong> ${item.date}</div>
+          <div class="item-detail">⏰ <strong>시간:</strong> ${item.time}</div>
+          <button class="btn-add" onclick="addSingleToGCal(${idx})">개별 구글 캘린더 추가</button>
+        `;
+        listContainer.appendChild(itemCard);
+      });
+
+      document.getElementById('resultSection').style.display = 'block';
+    }
+
+    function addSingleToGCal(index) {
+      const item = parsedList[index];
+      const times = item.time.split('~').map(t => t.trim());
+      
+      const startDate = item.date.replace(/-/g, '');
+      const startTime = times[0].replace(':', '').padStart(4, '0') + '00';
+      const endTime = times[1].replace(':', '').padStart(4, '0') + '00';
+
+      const title = encodeURIComponent(`[CourtSync] ${item.facility}`);
+      const dates = `${startDate}T${startTime}/${startDate}T${endTime}`;
+      const details = encodeURIComponent(`강동구 체육시설 대관 예약 (${item.facility})`);
+
+      const gcalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${dates}&details=${details}`;
+      window.open(gcalUrl, '_blank');
+    }
+
+    // 🚀 전체 일정을 .ics 파일로 묶어서 한번에 추가하는 함수
+    function downloadAllICS() {
+      if (parsedList.length === 0) return;
+
+      let icsContent = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//CourtSync//KR\n";
+
+      parsedList.forEach(item => {
+        const times = item.time.split('~').map(t => t.trim());
+        const startDate = item.date.replace(/-/g, '');
+        const startTime = times[0].replace(':', '').padStart(4, '0') + '00';
+        const endTime = times[1].replace(':', '').padStart(4, '0') + '00';
+
+        icsContent += "BEGIN:VEVENT\n";
+        icsContent += `SUMMARY:[CourtSync] ${item.facility}\n`;
+        icsContent += `DTSTART:${startDate}T${startTime}\n`;
+        icsContent += `DTEND:${startDate}T${endTime}\n`;
+        icsContent += `DESCRIPTION:강동구 체육시설 예약 (${item.facility})\n`;
+        icsContent += "END:VEVENT\n";
+      });
+
+      icsContent += "END:VCALENDAR";
+
+      const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+      const link = document.createElement('a');
+      link.href = window.URL.createObjectURL(blob);
+      link.setAttribute('download', 'CourtSync_Reservations.ics');
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  </script>
+</body>
+</html>
