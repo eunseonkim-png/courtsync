@@ -55,14 +55,15 @@ parsedList.push(reservation);
             class="btn-add"
             id="btn-${item.id}"
             onclick="addSingleToGCal(${idx})">개별 구글 캘린더 추가</button>
-       if(savedReservations.includes(item.id)){
+   
+        `;
+        listContainer.appendChild(itemCard);
+              if(savedReservations.includes(item.id)){
             const btn=document.getElementById(`btn-${item.id}`);
             btn.innerHTML="✅ 등록완료";
             btn.disabled=true;
             btn.style.background="#34C759";
 }
-        `;
-        listContainer.appendChild(itemCard);
       });
 
       document.getElementById('resultSection').style.display = 'block';
