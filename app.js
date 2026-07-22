@@ -90,7 +90,9 @@ parsedList.push(reservation);
         JSON.stringify(savedReservations)
     );
 }
-
+        
+setTimeout(()=>{
+    
 const btn=document.getElementById(`btn-${item.id}`);
 
 if(btn){
@@ -98,7 +100,7 @@ if(btn){
     btn.disabled=true;
     btn.style.background="#34C759";
 }
-    }
+    },300);
 
     // 🚀 전체 일정을 .ics 파일로 묶어서 한번에 추가하는 함수
     function downloadAllICS() {
