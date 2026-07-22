@@ -1,4 +1,3 @@
-
     let parsedList = [];
 
     function parseMultiReservations() {
