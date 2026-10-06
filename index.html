@@ -11,13 +11,17 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon-192.png">
-  <link rel="stylesheet" href="style.css?v=0.3.0">
-  <script src="app.js?v=0.3.0" defer></script>
+  <link rel="stylesheet" href="style.css?v=0.4.0">
+  <script src="config.js?v=0.4.0" defer></script>
+  <script src="google-calendar.js?v=0.4.0" defer></script>
+  <script src="app.js?v=0.4.0" defer></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
   <header>
-    <div class="brand">🎾 CourtSync <span class="version">v0.3.0</span></div>
+    <div class="brand">🎾 CourtSync <span class="version">v0.4.0</span></div>
     <p>예약은 코트에, 일정은 캘린더에.</p>
+    <button type="button" id="refreshButton" class="refresh-button">↻ 앱 새로고침</button>
   </header>
   <main class="container">
     <section class="card" aria-labelledby="importTitle">
@@ -31,17 +35,44 @@
     </section>
     <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
     <p id="storageNotice" class="feedback error" hidden>저장된 기록을 읽거나 저장하지 못했습니다. 지금 작업은 가능하지만 앱을 닫으면 기록이 유지되지 않을 수 있어요.</p>
+    <section class="card google-connection" aria-labelledby="googleTitle">
+      <h2 id="googleTitle">Google 캘린더 자동 등록</h2>
+      <p class="hint">예약을 선택하고 한 번에 등록하세요. 실제 저장을 확인한 예약만 초록색으로 표시합니다.</p>
+      <p id="googleConnectionStatus" class="hint small" role="status"></p>
+      <div class="connection-actions">
+        <button type="button" id="googleConnectButton">Google 캘린더 연결</button>
+        <button type="button" id="googleDisconnectButton" class="secondary" hidden>이번 연결 종료</button>
+      </div>
+      <details id="googleSettings" class="connection-settings">
+        <summary>처음 한 번 연결 설정</summary>
+        <p class="hint small">앱과 Google 계정을 연결하는 공개 ID가 필요합니다. 아래 설정은 한 번만 하면 됩니다.</p>
+        <ol>
+          <li><a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">Google Cloud</a>에서 CourtSync 프로젝트를 만들고 <strong>Google Calendar API</strong>를 사용 설정합니다.</li>
+          <li>Google Auth Platform에서 앱 이름과 연락처를 설정하고, 잠재고객을 외부·테스트로 선택해 <strong>본인 Gmail을 테스트 사용자</strong>로 추가합니다.</li>
+          <li>클라이언트 → 웹 애플리케이션을 만들고, 승인된 JavaScript 원본에 <code>https://eunseonkim-png.github.io</code>를 등록합니다.</li>
+          <li>발급된 클라이언트 ID를 아래에 붙여넣고 저장합니다. 클라이언트 보안 비밀번호는 사용하지 않습니다.</li>
+        </ol>
+        <label for="googleClientId">Google 앱 연결 ID</label>
+        <input id="googleClientId" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="숫자-문자열.apps.googleusercontent.com">
+        <button type="button" id="saveGoogleConfig" class="secondary">연결 설정 저장</button>
+        <p class="hint small">ID만 이 기기에 저장합니다. Google 로그인 토큰은 저장하지 않으며 앱을 새로고침하면 다시 연결해야 합니다.</p>
+      </details>
+    </section>
     <section id="resultSection" hidden aria-labelledby="resultTitle">
       <div class="section-title">
         <h2 id="resultTitle">2. 추출된 예약 <span id="countText">0</span>건</h2>
         <span class="hint">등록완료 <span id="confirmedCount">0</span>건</span>
       </div>
-      <p class="hint small">휴대폰에서는 예약별로 Google 캘린더를 열고 저장해 주세요. 저장 후 ‘저장했어요’를 누르면 초록색으로 바뀝니다.</p>
+      <p class="hint small">등록할 예약을 체크하고 Google 자동 등록을 누르세요. 연결한 계정의 기본 캘린더에 추가합니다.</p>
       <div class="selection-bar">
         <button type="button" id="selectPending" class="text-button">미등록 전체 선택</button>
+        <button type="button" id="selectAll" class="text-button">전체 선택</button>
         <button type="button" id="selectNone" class="text-button">선택 해제</button>
         <span id="selectedCount" class="hint small"></span>
       </div>
+      <button type="button" id="googleBulkButton">선택한 예약 Google에 자동 등록</button>
+      <p id="googleProgress" class="feedback" role="status" aria-live="polite" hidden></p>
+      <p class="hint small">기존 CourtSync 일정은 날짜·시간·제목을 확인해 중복 추가를 피합니다. 이전에 수동으로 등록했다면 ‘전체 선택’으로 다시 확인할 수 있습니다.</p>
       <button type="button" id="exportButton" class="btn-all">선택한 일정 한꺼번에 내보내기 (.ics)</button>
       <p class="hint small">파일 내보내기는 캘린더 등록과 별도입니다. Google 캘린더의 파일 가져오기는 컴퓨터에서 지원합니다.</p>
       <div id="bulkConfirm" class="card confirm-card" hidden>
@@ -54,11 +85,13 @@
       <summary>사용 방법 · 등록 표시 안내</summary>
       <ol>
         <li>강동구 예약목록 표 전체를 붙여넣고 예약을 추출합니다.</li>
-        <li>각 예약의 ‘Google 캘린더에 추가’를 눌러 캘린더에서 저장합니다.</li>
-        <li>CourtSync로 돌아와 ‘저장했어요’를 누릅니다.</li>
+        <li>처음 한 번 Google 연결 설정을 마치고 Google 캘린더를 연결합니다.</li>
+        <li>등록할 예약을 선택하고 ‘Google에 자동 등록’을 누릅니다. 새 일정은 저장하고 같은 일정이 있으면 기존 등록을 확인합니다.</li>
       </ol>
       <p>한꺼번에 옮길 때는 원하는 예약을 선택해 .ics 파일로 내보내세요. Google 캘린더에서는 컴퓨터의 설정 → 가져오기 및 내보내기에서 파일을 가져옵니다.</p>
-      <p>이 앱은 캘린더의 저장 여부를 자동으로 확인하지 않습니다. 등록완료는 사용자가 확인한 표시입니다. 이전 버전의 기록은 ‘저장 확인 필요’로 표시합니다.</p>
+      <p>‘Google 등록완료’는 Google API로 저장하거나 기존 일정을 확인한 기록입니다. ‘등록완료 · 직접 확인’은 개별 추가 또는 파일 가져오기 후 사용자가 확인한 표시입니다.</p>
+      <p>일부 일정이 실패하면 성공한 예약만 등록완료로 표시하고, 남은 예약은 선택된 상태로 유지합니다. 인터넷 연결이나 Google 권한을 확인한 뒤 다시 시도하세요.</p>
+      <p>앱 새로고침은 저장한 예약목록과 등록 이력을 유지합니다. 붙여넣기 원문과 Google 로그인 토큰은 저장하지 않으므로 새로고침 후 다시 입력하거나 연결해야 합니다.</p>
       <p>예약목록을 새로 추출하면 이번에 붙여넣은 목록으로 바뀝니다. 등록 이력은 유지됩니다. 예약 취소나 시간 변경은 캘린더에서도 직접 반영해 주세요.</p>
       <p><a href="https://support.google.com/calendar/answer/37118?hl=ko" target="_blank" rel="noopener noreferrer">Google 캘린더 파일 가져오기 안내 ↗</a></p>
     </details>

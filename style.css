@@ -113,6 +113,19 @@
     header p { color: #666; font-size: 13px; font-weight: 400; margin: 8px 0 0; }
     .brand { display: flex; justify-content: center; align-items: center; gap: 8px; }
     .version { color: #666; font-size: 12px; font-weight: 400; }
+    .refresh-button { width: auto; padding: 8px 14px; margin: 10px 0 0; color: #005fcc; background: #eaf3ff; font-size: 13px; }
+    .connection-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .connection-actions button { flex: 1; min-width: 140px; font-size: 14px; }
+    .connection-settings { font-size: 13px; line-height: 1.65; margin-top: 16px; }
+    .connection-settings summary { color: #005fcc; cursor: pointer; font-weight: 600; }
+    .connection-settings ol { padding-left: 20px; }
+    .connection-settings li { margin: 8px 0; }
+    .connection-settings a { color: #005fcc; }
+    .connection-settings code { overflow-wrap: anywhere; }
+    .connection-settings label { display: block; font-weight: 600; margin-top: 12px; }
+    #googleClientId { width: 100%; margin-top: 6px; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 16px; }
+    #googleConnectionStatus { overflow-wrap: anywhere; }
+    #googleProgress { white-space: pre-line; }
     .container { padding-bottom: max(40px, env(safe-area-inset-bottom)); }
     .hint { color: #61616a; font-size: 14px; line-height: 1.6; margin: 8px 0; }
     .small { font-size: 12px; }

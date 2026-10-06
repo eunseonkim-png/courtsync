@@ -1,6 +1,6 @@
 'use strict';
-const CACHE = 'courtsync-v0.3.0';
-const ASSETS = ['./', './index.html', './app.js?v=0.3.0', './style.css?v=0.3.0', './manifest.json', './icon.svg', './icon-192.png', './icon-512.png'];
+const CACHE = 'courtsync-v0.4.0';
+const ASSETS = ['./', './index.html', './app.js?v=0.4.0', './google-calendar.js?v=0.4.0', './config.js?v=0.4.0', './style.css?v=0.4.0', './manifest.json', './icon.svg', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
@@ -13,7 +13,7 @@ self.addEventListener('fetch', event => {
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
     try {
-      const response = await fetch(event.request);
+      const response = await fetch(event.request, { cache: 'no-cache' });
       if (response.ok) await cache.put(event.request, response.clone());
       return response;
     } catch {

@@ -1,5 +1,6 @@
 (function () {
   'use strict';
+  const VERSION = '0.4.0';
   const LIST_KEY = 'courtsyncReservations';
   const STATUS_KEY = 'courtsyncRegistrationStatus';
   const SOURCE_URL = 'https://gdgd.igangdong.or.kr/page/rent/my.od.list.php';
@@ -82,6 +83,11 @@
       details: `강동구 체육시설 대관 예약\n예약내역: ${SOURCE_URL}` });
     return `https://calendar.google.com/calendar/render?${params}`;
   }
+  function googleBooking(item) {
+    const iso = date => date.replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/, '$1-$2-$3T$4:$5:$6Z');
+    const [start, end] = eventDates(item).map(iso);
+    return { reservationId: reservationId(item), title: `[CourtSync] ${item.facility}`, location: item.facility, start, end };
+  }
   function escapeICS(text) {
     return String(text).replace(/\\/g, '\\\\').replace(/\r\n|\r|\n/g, '\\n').replace(/;/g, '\\;').replace(/,/g, '\\,');
   }
@@ -115,7 +121,7 @@
     return lines.map(foldICS).join('\r\n') + '\r\n';
   }
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { parseReservations, validateReservation, reservationId, eventDates, googleURL, buildICS };
+    module.exports = { parseReservations, validateReservation, reservationId, eventDates, googleURL, googleBooking, buildICS };
   }
   if (typeof document === 'undefined') return;
 
@@ -148,7 +154,28 @@
     const id = typeof entry === 'string' ? entry : entry && entry.id;
     if (typeof id === 'string' && !statuses.has(id)) statuses.set(id, { id, status: 'legacy' });
   }
-  const selected = new Set(parsedList.filter(item => statuses.get(item.id)?.status !== 'confirmed').map(item => item.id));
+  const googleAPI = window.CourtSyncGoogle;
+  const calendarClient = googleAPI.createClient();
+  const GOOGLE_KEY = 'courtsyncGoogleRegistrations';
+  const CLIENT_KEY = 'courtsyncGoogleClientId';
+  const LAST_ACCOUNT_KEY = 'courtsyncLastGoogleCalendarKey';
+  const googleRecords = new Map();
+  const storedGoogle = readStorage(GOOGLE_KEY, []);
+  for (const record of Array.isArray(storedGoogle) ? storedGoogle : []) {
+    if (record && typeof record.id === 'string' && /^[a-f0-9]{64}$/.test(record.calendarKey) && typeof record.eventId === 'string') {
+      googleRecords.set(`${record.calendarKey}:${record.id}`, record);
+    }
+  }
+  let calendarKey = readStorage(LAST_ACCOUNT_KEY, '');
+  if (typeof calendarKey !== 'string' || !/^[a-f0-9]{64}$/.test(calendarKey)) calendarKey = '';
+  const configuredId = window.COURTSYNC_CONFIG?.googleClientId;
+  let clientId = googleAPI.validClientId(configuredId) ? configuredId.trim() : readStorage(CLIENT_KEY, '');
+  if (!googleAPI.validClientId(clientId)) clientId = '';
+  let googleToken = '', tokenExpiresAt = 0, connectedCalendar = null;
+  let authBusy = false, syncing = false, refreshing = false;
+  function googleRegistered(item) { return Boolean(calendarKey && googleRecords.has(`${calendarKey}:${item.id}`)); }
+  function registered(item) { return statuses.get(item.id)?.status === 'confirmed' || googleRegistered(item); }
+  const selected = new Set(parsedList.filter(item => !registered(item)).map(item => item.id));
   let exportedIds = [];
 
   function message(text, isError = false) {
@@ -174,21 +201,33 @@
   function updateSelection() {
     const count = parsedList.filter(item => selected.has(item.id)).length;
     element('exportButton').textContent = `선택한 ${count}건 한꺼번에 내보내기 (.ics)`;
-    element('exportButton').disabled = count === 0;
+    element('exportButton').disabled = count === 0 || syncing || authBusy || refreshing;
     element('selectedCount').textContent = `${count}건 선택`;
+    element('googleBulkButton').textContent = syncing ? 'Google에 등록하는 중…' : `선택한 ${count}건 Google에 자동 등록`;
+    element('googleBulkButton').disabled = count === 0 || syncing || authBusy || refreshing;
+    for (const id of ['parseButton', 'selectPending', 'selectAll', 'selectNone', 'saveGoogleConfig', 'refreshButton', 'googleDisconnectButton']) {
+      element(id).disabled = syncing || authBusy || refreshing;
+    }
+    element('googleConnectButton').disabled = syncing || authBusy || refreshing;
+    element('googleConnectButton').textContent = authBusy ? 'Google 연결 중…' : googleToken && tokenExpiresAt > Date.now() ? 'Google 계정 바꾸기' : clientId ? 'Google 캘린더 연결' : 'Google 연결 설정하기';
+    element('googleDisconnectButton').hidden = !googleToken;
+    element('googleConnectionStatus').textContent = googleToken && tokenExpiresAt > Date.now() && connectedCalendar ?
+      `등록할 기본 캘린더: ${connectedCalendar.id}` : clientId ? '등록할 때 Google 계정을 연결해 주세요.' : '처음 한 번 Google 앱 연결 설정이 필요합니다.';
   }
   function render() {
     element('resultSection').hidden = parsedList.length === 0;
     element('countText').textContent = parsedList.length;
-    element('confirmedCount').textContent = parsedList.filter(item => statuses.get(item.id)?.status === 'confirmed').length;
+    element('confirmedCount').textContent = parsedList.filter(registered).length;
     element('reservationList').replaceChildren();
     for (const item of parsedList) {
       const status = statuses.get(item.id)?.status;
+      const isRegistered = registered(item);
       const card = document.createElement('article');
-      card.className = `item-card${status === 'confirmed' ? ' registered' : ''}`;
+      card.className = `item-card${isRegistered ? ' registered' : ''}`;
       const row = document.createElement('label'); row.className = 'item-heading';
       const checkbox = document.createElement('input'); checkbox.type = 'checkbox';
       checkbox.checked = selected.has(item.id);
+      checkbox.disabled = syncing;
       checkbox.setAttribute('aria-label', `${item.facility} ${item.date} ${item.time} 선택`);
       checkbox.addEventListener('change', () => {
         if (checkbox.checked) selected.add(item.id); else selected.delete(item.id);
@@ -199,21 +238,24 @@
       const details = document.createElement('p'); details.className = 'item-detail';
       details.textContent = `${item.date} · ${item.time.replace('~', '–')} (한국 시간)`;
       const badge = document.createElement('span');
-      badge.className = `badge ${status === 'confirmed' ? 'success' : 'pending'}`;
-      badge.textContent = ({ confirmed: '등록완료', opened: '저장 확인 대기', exported: '파일 내보냄 · 저장 확인 대기', legacy: '이전 기록 · 저장 확인 필요' })[status] || '미등록';
+      badge.className = `badge ${isRegistered ? 'success' : 'pending'}`;
+      badge.textContent = googleRegistered(item) ? 'Google 등록완료' : ({ confirmed: '등록완료 · 직접 확인', opened: '저장 확인 대기', exported: '파일 내보냄 · 저장 확인 대기', legacy: '이전 기록 · 저장 확인 필요' })[status] || '미등록';
       card.append(row, details, badge);
       const actions = document.createElement('div'); actions.className = 'item-actions';
       const link = document.createElement('a'); link.className = 'button btn-add';
       link.href = googleURL(item); link.target = '_blank'; link.rel = 'noopener noreferrer';
-      link.textContent = status === 'confirmed' ? 'Google 일정 다시 열기' : 'Google 캘린더에 추가';
+      link.textContent = isRegistered ? 'Google 일정 작성 창 열기' : '개별 Google 캘린더 추가';
       link.addEventListener('click', event => {
-        if (status === 'confirmed' && !window.confirm('이미 등록한 일정입니다. 다시 저장하면 중복될 수 있어요. 일정 작성 창을 열까요?')) { event.preventDefault(); return; }
-        if (status !== 'confirmed') setStatus([item.id], 'opened');
+        if (syncing) { event.preventDefault(); return; }
+        if (isRegistered && !window.confirm('이미 등록한 일정입니다. 다시 저장하면 중복될 수 있어요. 일정 작성 창을 열까요?')) { event.preventDefault(); return; }
+        if (!isRegistered) setStatus([item.id], 'opened');
         message('Google 캘린더에서 저장한 뒤 돌아와서 ‘저장했어요’를 눌러주세요.');
       });
       actions.append(link);
-      if (status === 'confirmed') {
+      if (isRegistered) {
         actions.append(button('등록 표시 해제', 'button secondary', () => {
+          googleRecords.delete(`${calendarKey}:${item.id}`);
+          writeStorage(GOOGLE_KEY, [...googleRecords.values()]);
           setStatus([item.id], 'opened');
           message('이 앱의 등록 표시를 해제했습니다. 캘린더 일정은 그대로 남아 있습니다.');
         }));
@@ -222,10 +264,12 @@
           setStatus([item.id], 'confirmed'); message(`${item.facility} 일정을 등록완료로 표시했습니다.`);
         }));
       }
+      for (const action of actions.querySelectorAll('button')) action.disabled = syncing;
       card.append(actions); element('reservationList').append(card);
     }
     updateSelection();
     element('bulkConfirm').hidden = exportedIds.length === 0;
+    element('confirmExportButton').disabled = syncing;
     element('storageNotice').hidden = storageAvailable;
   }
 
@@ -237,8 +281,10 @@
       message('결제완료 예약을 찾지 못했습니다. 시설명, 이용일자, 이용시간, 결제상태가 모두 포함된 표를 붙여넣어 주세요. 기존 목록은 유지됩니다.', true); return;
     }
     parsedList = result.items; selected.clear();
-    for (const item of parsedList) if (statuses.get(item.id)?.status !== 'confirmed') selected.add(item.id);
-    exportedIds = []; writeStorage(LIST_KEY, parsedList); render();
+    for (const item of parsedList) if (!registered(item)) selected.add(item.id);
+    exportedIds = [];
+    element('googleProgress').hidden = true; element('googleProgress').textContent = '';
+    writeStorage(LIST_KEY, parsedList); render();
     const notes = [];
     if (result.stats.unpaid) notes.push(`미결제·취소 ${result.stats.unpaid}건 제외`);
     if (result.stats.invalid) notes.push(`형식 확인 필요 ${result.stats.invalid}건 제외`);
@@ -248,9 +294,10 @@
   });
   element('selectPending').addEventListener('click', () => {
     selected.clear();
-    for (const item of parsedList) if (statuses.get(item.id)?.status !== 'confirmed') selected.add(item.id);
+    for (const item of parsedList) if (!registered(item)) selected.add(item.id);
     render();
   });
+  element('selectAll').addEventListener('click', () => { for (const item of parsedList) selected.add(item.id); render(); });
   element('selectNone').addEventListener('click', () => { selected.clear(); render(); });
   element('exportButton').addEventListener('click', async () => {
     const items = parsedList.filter(item => selected.has(item.id));
@@ -281,7 +328,124 @@
     const count = exportedIds.length; exportedIds = []; render();
     message(`${count}건을 등록완료로 표시했습니다.`);
   });
+
+  function showGoogleSettings() {
+    element('googleSettings').open = true;
+    element('googleClientId').focus();
+    element('googleSettings').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  element('googleClientId').value = clientId;
+  element('saveGoogleConfig').addEventListener('click', () => {
+    const value = element('googleClientId').value.trim();
+    if (!googleAPI.validClientId(value)) {
+      message('Google의 웹 애플리케이션 클라이언트 ID를 입력해 주세요. 끝이 .apps.googleusercontent.com인 공개 ID입니다.', true); return;
+    }
+    clientId = value;
+    writeStorage(CLIENT_KEY, clientId);
+    googleToken = ''; tokenExpiresAt = 0; connectedCalendar = null;
+    element('googleSettings').open = false;
+    updateSelection();
+    message('연결 설정을 저장했습니다. ‘Google 캘린더 연결’을 눌러 주세요.');
+  });
+  function connectGoogle() {
+    if (!clientId) { showGoogleSettings(); message('처음 한 번 Google 앱 연결 설정을 완료해 주세요.'); return; }
+    if (!navigator.onLine) { message('Google 연결에는 인터넷이 필요합니다.', true); return; }
+    const oauth = window.google?.accounts?.oauth2;
+    if (!oauth) { message('Google 로그인 화면을 불러오지 못했습니다. Safari에서 인터넷 연결을 확인하고 앱을 새로고침해 주세요.', true); return; }
+    googleToken = ''; tokenExpiresAt = 0; connectedCalendar = null;
+    authBusy = true; updateSelection();
+    const finish = () => { authBusy = false; render(); };
+    try {
+      const tokenClient = oauth.initTokenClient({
+        client_id: clientId, scope: googleAPI.SCOPES.join(' '), include_granted_scopes: false,
+        callback: async response => {
+          if (response.error || !response.access_token || !oauth.hasGrantedAllScopes(response, ...googleAPI.SCOPES)) {
+            message('Google 연결이 완료되지 않았습니다. 일정 등록에 필요한 권한을 허용해 주세요.', true); finish(); return;
+          }
+          try {
+            const token = response.access_token;
+            const calendar = await calendarClient.primaryCalendar(token);
+            googleToken = token;
+            tokenExpiresAt = Date.now() + Math.max(0, Number(response.expires_in || 3600) - 60) * 1000;
+            connectedCalendar = calendar; calendarKey = calendar.key;
+            writeStorage(LAST_ACCOUNT_KEY, calendarKey);
+            message('Google 캘린더를 연결했습니다. 등록할 예약을 선택한 뒤 자동 등록 버튼을 눌러 주세요.');
+          } catch (error) { message(googleAPI.readableError(error), true); }
+          finally { finish(); }
+        },
+        error_callback: error => {
+          message(error.type === 'popup_closed' ? 'Google 연결 창을 닫았습니다.' : 'Google 연결 창을 열지 못했습니다. Safari에서 팝업 차단 설정을 확인해 주세요.', error.type !== 'popup_closed');
+          finish();
+        }
+      });
+      // Called synchronously inside a user click so mobile popup permissions apply.
+      tokenClient.requestAccessToken({ prompt: 'select_account' });
+    } catch { message('Google 연결을 시작하지 못했습니다. 앱을 새로고침한 뒤 다시 시도해 주세요.', true); finish(); }
+  }
+  element('googleConnectButton').addEventListener('click', connectGoogle);
+  element('googleDisconnectButton').addEventListener('click', () => {
+    googleToken = ''; tokenExpiresAt = 0; connectedCalendar = null;
+    updateSelection(); message('이번 연결을 종료했습니다. 다음 등록 때 Google 계정을 다시 연결해 주세요.');
+  });
+  element('googleBulkButton').addEventListener('click', async () => {
+    if (syncing) return;
+    if (!googleToken || tokenExpiresAt <= Date.now() || !connectedCalendar) {
+      connectGoogle(); return;
+    }
+    if (!navigator.onLine) { message('일정을 등록하려면 인터넷에 연결해 주세요.', true); return; }
+    const items = parsedList.filter(item => selected.has(item.id));
+    if (!items.length) return;
+    const bookingMap = new Map(items.map(item => [item.id, item]));
+    const targetCalendar = connectedCalendar;
+    syncing = true;
+    element('googleProgress').hidden = false;
+    element('googleProgress').textContent = `Google 일정 확인 · 등록 시작 (0/${items.length})`;
+    render();
+    try {
+      const results = await calendarClient.sync(items.map(googleBooking), googleToken, targetCalendar.id, (result, count, total) => {
+        if (result.ok) {
+          googleRecords.set(`${targetCalendar.key}:${result.reservationId}`, {
+            id: result.reservationId, calendarKey: targetCalendar.key, eventId: result.event.id, verifiedAt: new Date().toISOString()
+          });
+          writeStorage(GOOGLE_KEY, [...googleRecords.values()]);
+          selected.delete(result.reservationId);
+        }
+        element('googleProgress').textContent = `${count}/${total}건 처리 · ${result.ok ? '저장 확인 완료' : '등록 실패'} (${bookingMap.get(result.reservationId).facility})`;
+        render();
+      });
+      const saved = results.filter(result => result.ok);
+      const created = saved.filter(result => result.created).length;
+      const failed = results.filter(result => !result.ok);
+      const remaining = items.length - saved.length;
+      const text = `Google 등록 확인 ${saved.length}건 · 새로 추가 ${created}건 · 기존 일정 ${saved.length - created}건${remaining ? ` · 남은 예약 ${remaining}건` : ''}`;
+      element('googleProgress').textContent = text;
+      message(text + (failed.length ? `\n${googleAPI.readableError(failed[0].error)}` : ''), remaining > 0);
+      if (failed.some(result => result.error.status === 401)) { googleToken = ''; tokenExpiresAt = 0; connectedCalendar = null; }
+    } catch (error) { message(googleAPI.readableError(error), true); }
+    finally { syncing = false; render(); }
+  });
+  async function waitForActivation(worker) {
+    if (!worker || worker.state === 'activated' || worker.state === 'redundant') return;
+    await new Promise(resolve => {
+      const finish = () => { clearTimeout(timer); worker.removeEventListener('statechange', check); resolve(); };
+      const check = () => { if (worker.state === 'activated' || worker.state === 'redundant') finish(); };
+      const timer = setTimeout(finish, 8000);
+      worker.addEventListener('statechange', check); check();
+    });
+  }
+  element('refreshButton').addEventListener('click', async () => {
+    if (syncing || authBusy || refreshing) return;
+    if (!navigator.onLine) { message('최신 버전 새로고침에는 인터넷 연결이 필요합니다.', true); return; }
+    refreshing = true; updateSelection(); element('refreshButton').textContent = '새로고침 중…';
+    try {
+      if ('serviceWorker' in navigator) {
+        const registration = await navigator.serviceWorker.getRegistration();
+        if (registration) { await registration.update(); await waitForActivation(registration.installing || registration.waiting); }
+      }
+    } catch { /* A network-first navigation still refreshes the app shell. */ }
+    window.location.replace(new URL(`./?refresh=${Date.now()}`, window.location.href).href);
+  });
   render();
   if (parsedList.length) message('지난번 예약목록을 불러왔습니다. 새 예약은 표를 다시 붙여넣어 업데이트하세요.');
-  if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('./sw.js?v=0.3.0').catch(() => {});
+  if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register(`./sw.js?v=${VERSION}`).catch(() => {});
 }());
