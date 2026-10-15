@@ -1,6 +1,6 @@
 'use strict';
-const CACHE = 'courtsync-v0.4.0';
-const ASSETS = ['./', './index.html', './app.js?v=0.4.0', './google-calendar.js?v=0.4.0', './config.js?v=0.4.0', './style.css?v=0.4.0', './manifest.json', './icon.svg', './icon-192.png', './icon-512.png'];
+const CACHE = 'courtsync-v0.5.0';
+const ASSETS = ['./', './index.html', './app.js?v=0.5.0', './kakao-calendar.js?v=0.5.0', './google-calendar.js?v=0.4.0', './config.js?v=0.4.0', './style.css?v=0.4.0', './manifest.json', './icon.svg', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
 });

@@ -14,12 +14,13 @@
   <link rel="stylesheet" href="style.css?v=0.4.0">
   <script src="config.js?v=0.4.0" defer></script>
   <script src="google-calendar.js?v=0.4.0" defer></script>
-  <script src="app.js?v=0.4.0" defer></script>
+  <script src="kakao-calendar.js?v=0.5.0" defer></script>
+  <script src="app.js?v=0.5.0" defer></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
   <header>
-    <div class="brand">🎾 CourtSync <span class="version">v0.4.0</span></div>
+    <div class="brand">🎾 CourtSync <span class="version">v0.5.0</span></div>
     <p>예약은 코트에, 일정은 캘린더에.</p>
     <button type="button" id="refreshButton" class="refresh-button">↻ 앱 새로고침</button>
   </header>
@@ -59,6 +60,29 @@
         <p class="hint small">ID만 이 기기에 저장합니다. Google 로그인 토큰은 저장하지 않으며 앱을 새로고침하면 다시 연결해야 합니다.</p>
       </details>
     </section>
+    <section class="card" aria-labelledby="kakaoTitle">
+      <h2 id="kakaoTitle">카카오톡 톡캘린더 함께 등록</h2>
+      <p class="hint">카카오를 연결한 뒤 선택한 예약을 양쪽 캘린더에 등록하세요. 이미 Google에 등록한 예약도 ‘전체 선택’으로 카카오에 추가할 수 있어요.</p>
+      <p id="kakaoConnectionStatus" class="hint small" role="status"></p>
+      <div class="connection-actions">
+        <button type="button" id="kakaoConnectButton">카카오 연결</button>
+        <button type="button" id="kakaoDisconnectButton" class="secondary" hidden>카카오 연결 종료</button>
+      </div>
+      <details id="kakaoSettings" class="connection-settings">
+        <summary>처음 한 번 카카오 연결 설정</summary>
+        <p class="hint small">현재 카카오 연결 서버 설정이 필요합니다. 비밀키는 이 사이트에 입력하지 않습니다.</p>
+        <ol>
+          <li><a href="https://developers.kakao.com/" target="_blank" rel="noopener noreferrer">카카오 디벨로퍼스</a>에서 CourtSync 앱을 만들고 카카오 로그인을 켭니다.</li>
+          <li>동의항목의 ‘톡캘린더 및 일정 생성, 조회, 편집/삭제’를 선택 동의로 설정합니다. 본인 계정은 앱 멤버로 테스트할 수 있습니다.</li>
+          <li><a href="https://github.com/eunseonkim-png/courtsync/tree/main/kakao-server" target="_blank" rel="noopener noreferrer">연결 서버 설치 안내</a>에 따라 서버를 준비하고, 서버 주소 뒤에 <code>/callback</code>을 붙여 Redirect URI로 등록합니다.</li>
+          <li>아래에 연결 서버의 HTTPS 주소만 입력하고 저장합니다.</li>
+        </ol>
+        <label for="kakaoEndpoint">카카오 연결 서버 주소</label>
+        <input id="kakaoEndpoint" type="url" autocomplete="off" spellcheck="false" placeholder="https://courtsync-kakao.계정.workers.dev">
+        <button type="button" id="saveKakaoConfig" class="secondary">카카오 설정 저장</button>
+        <p class="hint small">로그인 연결은 이번 화면에서만 유지됩니다. 새로고침 후에는 다시 연결하세요. 예약 취소·시간 변경은 각 캘린더에서 직접 반영해 주세요.</p>
+      </details>
+    </section>
     <section id="resultSection" hidden aria-labelledby="resultTitle">
       <div class="section-title">
         <h2 id="resultTitle">2. 추출된 예약 <span id="countText">0</span>건</h2>
@@ -72,6 +96,7 @@
         <span id="selectedCount" class="hint small"></span>
       </div>
       <button type="button" id="googleBulkButton">선택한 예약 Google에 자동 등록</button>
+      <button type="button" id="bothBulkButton" style="background:#fee500;color:#191919;margin-top:10px">선택한 예약 Google·카카오 함께 등록</button>
       <p id="googleProgress" class="feedback" role="status" aria-live="polite" hidden></p>
       <p class="hint small">기존 CourtSync 일정은 날짜·시간·제목을 확인해 중복 추가를 피합니다. 이전에 수동으로 등록했다면 ‘전체 선택’으로 다시 확인할 수 있습니다.</p>
       <button type="button" id="exportButton" class="btn-all">선택한 일정 한꺼번에 내보내기 (.ics)</button>

@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const VERSION = '0.4.0';
+  const VERSION = '0.5.0';
   const LIST_KEY = 'courtsyncReservations';
   const STATUS_KEY = 'courtsyncRegistrationStatus';
   const SOURCE_URL = 'https://gdgd.igangdong.or.kr/page/rent/my.od.list.php';
@@ -172,7 +172,18 @@
   let clientId = googleAPI.validClientId(configuredId) ? configuredId.trim() : readStorage(CLIENT_KEY, '');
   if (!googleAPI.validClientId(clientId)) clientId = '';
   let googleToken = '', tokenExpiresAt = 0, connectedCalendar = null;
-  let authBusy = false, syncing = false, refreshing = false;
+  let authBusy = false, syncing = false, refreshing = false, togetherMode = false;
+  const kakaoAPI = window.CourtSyncKakao;
+  let kakaoEndpoint = window.COURTSYNC_CONFIG?.kakaoEndpoint || readStorage('courtsyncKakaoEndpoint', '');
+  if (!kakaoAPI.validEndpoint(kakaoEndpoint)) kakaoEndpoint = '';
+  let kakaoClient = kakaoEndpoint ? kakaoAPI.createClient(kakaoEndpoint) : null;
+  let kakaoKey = '', kakaoBusy = false;
+  const kakaoRecords = new Map();
+  const storedKakao = readStorage('courtsyncKakaoRegistrations', []);
+  for (const record of Array.isArray(storedKakao) ? storedKakao : []) {
+    if (record && typeof record.id === 'string' && /^[a-f0-9]{64}$/.test(record.accountKey) && typeof record.eventId === 'string') kakaoRecords.set(`${record.accountKey}:${record.id}`, record);
+  }
+  const kakaoRegistered = item => Boolean(kakaoKey && kakaoRecords.has(`${kakaoKey}:${item.id}`));
   function googleRegistered(item) { return Boolean(calendarKey && googleRecords.has(`${calendarKey}:${item.id}`)); }
   function registered(item) { return statuses.get(item.id)?.status === 'confirmed' || googleRegistered(item); }
   const selected = new Set(parsedList.filter(item => !registered(item)).map(item => item.id));
@@ -205,6 +216,14 @@
     element('selectedCount').textContent = `${count}건 선택`;
     element('googleBulkButton').textContent = syncing ? 'Google에 등록하는 중…' : `선택한 ${count}건 Google에 자동 등록`;
     element('googleBulkButton').disabled = count === 0 || syncing || authBusy || refreshing;
+    element('bothBulkButton').textContent = syncing ? '캘린더에 등록하는 중…' : `선택한 ${count}건 Google·카카오 함께 등록`;
+    element('bothBulkButton').disabled = count === 0 || syncing || authBusy || refreshing || kakaoBusy;
+    element('kakaoConnectButton').disabled = syncing || authBusy || refreshing || kakaoBusy;
+    element('kakaoConnectButton').textContent = kakaoBusy ? '카카오 연결 중…' : kakaoClient?.connected() ? '카카오 계정 바꾸기' : '카카오 연결';
+    element('kakaoDisconnectButton').hidden = !kakaoClient?.connected();
+    element('kakaoDisconnectButton').disabled = syncing || kakaoBusy;
+    element('saveKakaoConfig').disabled = syncing || kakaoBusy;
+    element('kakaoConnectionStatus').textContent = kakaoClient?.connected() ? '카카오 연결됨 · 본인 기본 톡캘린더에 등록합니다.' : kakaoEndpoint ? '등록 전에 카카오를 연결해 주세요.' : '카카오 연결 서버 설정 대기 · 아직 톡캘린더에 등록할 수 없습니다.';
     for (const id of ['parseButton', 'selectPending', 'selectAll', 'selectNone', 'saveGoogleConfig', 'refreshButton', 'googleDisconnectButton']) {
       element(id).disabled = syncing || authBusy || refreshing;
     }
@@ -241,6 +260,10 @@
       badge.className = `badge ${isRegistered ? 'success' : 'pending'}`;
       badge.textContent = googleRegistered(item) ? 'Google 등록완료' : ({ confirmed: '등록완료 · 직접 확인', opened: '저장 확인 대기', exported: '파일 내보냄 · 저장 확인 대기', legacy: '이전 기록 · 저장 확인 필요' })[status] || '미등록';
       card.append(row, details, badge);
+      const kakaoBadge = document.createElement('span');
+      kakaoBadge.className = `badge ${kakaoRegistered(item) ? 'success' : 'pending'}`;
+      kakaoBadge.textContent = kakaoRegistered(item) ? '카카오 등록완료' : '카카오 미확인';
+      card.append(kakaoBadge);
       const actions = document.createElement('div'); actions.className = 'item-actions';
       const link = document.createElement('a'); link.className = 'button btn-add';
       link.href = googleURL(item); link.target = '_blank'; link.rel = 'noopener noreferrer';
@@ -387,7 +410,7 @@
     googleToken = ''; tokenExpiresAt = 0; connectedCalendar = null;
     updateSelection(); message('이번 연결을 종료했습니다. 다음 등록 때 Google 계정을 다시 연결해 주세요.');
   });
-  element('googleBulkButton').addEventListener('click', async () => {
+  async function syncGoogleSelected() {
     if (syncing) return;
     if (!googleToken || tokenExpiresAt <= Date.now() || !connectedCalendar) {
       connectGoogle(); return;
@@ -408,7 +431,7 @@
             id: result.reservationId, calendarKey: targetCalendar.key, eventId: result.event.id, verifiedAt: new Date().toISOString()
           });
           writeStorage(GOOGLE_KEY, [...googleRecords.values()]);
-          selected.delete(result.reservationId);
+          if (!togetherMode || kakaoRegistered(bookingMap.get(result.reservationId))) selected.delete(result.reservationId);
         }
         element('googleProgress').textContent = `${count}/${total}건 처리 · ${result.ok ? '저장 확인 완료' : '등록 실패'} (${bookingMap.get(result.reservationId).facility})`;
         render();
@@ -423,6 +446,53 @@
       if (failed.some(result => result.error.status === 401)) { googleToken = ''; tokenExpiresAt = 0; connectedCalendar = null; }
     } catch (error) { message(googleAPI.readableError(error), true); }
     finally { syncing = false; render(); }
+  }
+  element('googleBulkButton').addEventListener('click', syncGoogleSelected);
+  element('kakaoEndpoint').value = kakaoEndpoint;
+  element('saveKakaoConfig').addEventListener('click', () => {
+    const value = element('kakaoEndpoint').value.trim();
+    if (!kakaoAPI.validEndpoint(value)) { message('HTTPS 연결 서버 주소를 입력해 주세요. 경로와 비밀키는 넣지 않습니다.', true); return; }
+    kakaoEndpoint = new URL(value).origin + '/';
+    writeStorage('courtsyncKakaoEndpoint', kakaoEndpoint);
+    kakaoClient?.disconnect(); kakaoClient = kakaoAPI.createClient(kakaoEndpoint); kakaoKey = '';
+    element('kakaoSettings').open = false; render(); message('카카오 설정을 저장했습니다. 카카오 연결 버튼을 눌러 주세요.');
+  });
+  function connectKakao() {
+    if (!kakaoClient) { element('kakaoSettings').open = true; element('kakaoEndpoint').focus(); message('카카오 연결 서버 설정을 먼저 완료해 주세요.', true); return; }
+    kakaoBusy = true; updateSelection();
+    kakaoClient.connect().then(account => { kakaoKey = account.accountKey; message('카카오를 연결했습니다. 등록할 예약을 선택하고 함께 등록을 눌러 주세요.'); })
+      .catch(error => message(error.message, true)).finally(() => { kakaoBusy = false; render(); });
+  }
+  element('kakaoConnectButton').addEventListener('click', connectKakao);
+  element('kakaoDisconnectButton').addEventListener('click', () => { kakaoClient?.disconnect(); kakaoKey = ''; render(); message('카카오 연결을 종료했습니다.'); });
+  element('bothBulkButton').addEventListener('click', async () => {
+    if (syncing || authBusy || kakaoBusy || refreshing) return;
+    // Connect both before any writes. Login is only initiated from the user click.
+    if (!kakaoClient?.connected()) { connectKakao(); return; }
+    if (!googleToken || tokenExpiresAt <= Date.now() || !connectedCalendar) { connectGoogle(); return; }
+    const items = parsedList.filter(item => selected.has(item.id));
+    if (!items.length) return;
+    togetherMode = true;
+    try {
+      await syncGoogleSelected();
+      syncing = true; render();
+      let saved = 0, failed = 0;
+      for (const item of items) {
+        try {
+          const result = await kakaoClient.syncOne(googleBooking(item));
+          if (typeof result.eventId !== 'string') throw new Error('카카오 저장 결과를 확인하지 못했습니다.');
+          kakaoRecords.set(`${kakaoKey}:${item.id}`, { id: item.id, accountKey: kakaoKey, eventId: result.eventId, verifiedAt: new Date().toISOString() });
+          writeStorage('courtsyncKakaoRegistrations', [...kakaoRecords.values()]); saved++;
+          if (googleRegistered(item)) selected.delete(item.id); else selected.add(item.id);
+        } catch (error) { failed++; selected.add(item.id); message(error.message || '카카오 등록 실패', true); }
+        element('googleProgress').hidden = false;
+        element('googleProgress').textContent = `카카오 ${saved + failed}/${items.length}건 처리 · 성공 ${saved}건 · 실패 ${failed}건`;
+        render();
+      }
+      const googleCount = items.filter(googleRegistered).length;
+      const complete = items.filter(item => googleRegistered(item) && kakaoRegistered(item)).length;
+      message(`Google 등록 기록 ${googleCount}건 · 카카오 저장 확인 ${saved}건 · 양쪽 완료 ${complete}/${items.length}건${complete < items.length ? ' · 남은 예약을 다시 시도해 주세요.' : ''}`, complete < items.length);
+    } finally { togetherMode = false; syncing = false; render(); }
   });
   async function waitForActivation(worker) {
     if (!worker || worker.state === 'activated' || worker.state === 'redundant') return;

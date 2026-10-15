@@ -1,0 +1,6 @@
+name = "courtsync-kakao"
+main = "worker.mjs"
+compatibility_date = "2026-10-15"
+[vars]
+APP_ORIGIN = "https://eunseonkim-png.github.io"
+# Configure KAKAO_REST_KEY, KAKAO_CLIENT_SECRET and SESSION_SECRET as Worker secrets.
